@@ -95,14 +95,25 @@ class Prover:
             witness[None] = 0
 
         # Compute wire assignments for A, B, C, corresponding:
-        # - A_values: witness[program.wires()[i].L]
-        # - B_values: witness[program.wires()[i].R]
-        # - C_values: witness[program.wires()[i].O]
+        A_values = [Scalar(0) for _ in range(group_order)]
+        B_values = [Scalar(0) for _ in range(group_order)]
+        C_values = [Scalar(0) for _ in range(group_order)]
 
         # Construct A, B, C Lagrange interpolation polynomials for
         # A_values, B_values, C_values
+        for i, gate_wires in enumerate(program.wires()):
+            A_values[i]= Scalar(witness[gate_wires.L])
+            B_values[i]= Scalar(witness[gate_wires.R])
+            C_values[i]= Scalar(witness[gate_wires.O])
 
         # Compute a_1, b_1, c_1 commitments to A, B, C polynomials
+        self.A = Polynomial(A_values, Basis.LAGRANGE)
+        self.B = Polynomial(B_values, Basis.LAGRANGE)
+        self.C = Polynomial(C_values, Basis.LAGRANGE)
+
+        a_1 = setup.commit(self.A)
+        b_1 = setup.commit(self.B)
+        c_1 = setup.commit(self.C)
 
         # Sanity check that witness fulfils gate constraints
         assert (
@@ -123,10 +134,22 @@ class Prover:
         setup = self.setup
 
         # Using A, B, C, values, and pk.S1, pk.S2, pk.S3, compute
-        # Z_values for permutation grand product polynomial Z
-        #
+        # Z_values for permutation grand product polynomial Z 
+        Z_values = [Scalar(1)]
+        roots_of_unity = Scalar.root_of_unity(group_order)
+
         # Note the convenience function:
         #       self.rlc(val1, val2) = val_1 + self.beta * val_2 + gamma
+        for i in range(group_order):
+            Z_values.append(
+                Z_values[-1]
+                * self.rlc(self.A.values[i], roots_of_unity[i])
+                * self.rlc(self.B.values[i], 2 * roots_of_unity[i])
+                * self.rlc(self.C.values[i], 3 * roots_of_unity[i])
+                / self.rlc(self.A.values[i], self.pk.S1.values[i])
+                / self.rlc(self.B.values[i], self.pk.S2.values[i])
+                / self.rlc(self.C.values[i], self.pk.S3.values[i])
+            )
 
         # Check that the last term Z_n = 1
         assert Z_values.pop() == 1
@@ -146,9 +169,14 @@ class Prover:
             ] == 0
 
         # Construct Z, Lagrange interpolation polynomial for Z_values
+        Z = Polynomial(Z_values, Basis.LAGRANGE)
+
         # Cpmpute z_1 commitment to Z polynomial
+        z_1 = setup.commit(Z)
+        print("Permutation accumulator polynomial generated")
 
         # Return z_1
+        self.Z = Z
         return Message2(z_1)
 
     def round_3(self) -> Message3:
